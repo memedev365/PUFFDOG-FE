@@ -1,785 +1,601 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const { createUmi } = require('@metaplex-foundation/umi-bundle-defaults');
-const { keypairIdentity, publicKey, transactionBuilder, generateSigner } = require('@metaplex-foundation/umi');
-const { mplTokenMetadata, createNft } = require('@metaplex-foundation/mpl-token-metadata');
-const { setComputeUnitLimit } = require('@metaplex-foundation/mpl-toolbox');
-const { Connection, SystemProgram, PublicKey, LAMPORTS_PER_SOL, Keypair } = require('@solana/web3.js');
-const bs58 = require('bs58');
-const { publicKey: UMIPublicKey, percentAmount } = require('@metaplex-foundation/umi');
-const path = require('path');
-const bodyParser = require('body-parser');
-const axios = require('axios');
-const helmet = require('helmet');
-const upload = require('express-fileupload');
-const morgan = require('morgan');
-const txTracker = require('./helper/txTracker');
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import {
+    Transaction,
+    SystemProgram,
+    ComputeBudgetProgram,
+    LAMPORTS_PER_SOL,
+    PublicKey,
+    Connection,
+    Keypair
+} from '@solana/web3.js';
+import { FC, useMemo, useState, useEffect } from 'react';
+import { createUmi } from '@metaplex-foundation/umi-bundle-defaults';
+import { transactionBuilder, publicKey, keypairIdentity } from '@metaplex-foundation/umi';
+import { setComputeUnitLimit } from '@metaplex-foundation/mpl-toolbox';
+import { mplTokenMetadata } from '@metaplex-foundation/mpl-token-metadata';
+import {
+    mplBubblegum, fetchMerkleTree,
+    findLeafAssetIdPda, mintToCollectionV1, parseLeafFromMintToCollectionV1Transaction
+} from '@metaplex-foundation/mpl-bubblegum';
+import { publicKey as UMIPublicKey } from "@metaplex-foundation/umi";
+import { useWalletError } from '../contexts/ContextProvider';
+import dynamic from 'next/dynamic';
+import { debounce } from 'lodash';
+import { notify } from "../utils/notifications";
+import axios from 'axios'; // Add axios import
+import { walletAdapterIdentity } from '@metaplex-foundation/umi-signer-wallet-adapters';
+import AirdropPanel from './airdrop';
 
-const fs = require('fs').promises;
+const WalletMultiButtonDynamic = dynamic(
+    async () => (await import('@solana/wallet-adapter-react-ui')).WalletMultiButton,
+    { ssr: false }
+);
 
-// Path to the JSON file that will store mint IDs
-const MINT_TRACKING_FILE = path.join(__dirname, 'mint-tracking.json');
+export const TreeBubble: FC = () => {
+    // Wallet and connection
+    const { connection } = useConnection();
+    const wallet = useWallet();
+    const { walletError, setWalletError } = useWalletError();
 
-const {
-  createTree,
-  mplBubblegum,
-  fetchMerkleTree,
-  fetchTreeConfigFromSeeds,
-  verifyCollection,
-  TokenProgramVersion,
-  getAssetWithProof,
-  findLeafAssetIdPda,
-  LeafSchema,
-  mintToCollectionV1,
-  parseLeafFromMintToCollectionV1Transaction,
-  setAndVerifyCollection
-} = require('@metaplex-foundation/mpl-bubblegum');
+    // Configuration
+    const quicknodeEndpoint = process.env.NEXT_PUBLIC_HELIUS_RPC;
+    const merkleTreeLink = UMIPublicKey(process.env.NEXT_PUBLIC_MERKLETREE);
+    const tokenAddress = UMIPublicKey(process.env.NEXT_PUBLIC_TOKEN_ADDRESS_OF_THE_COLLECTION);
+    const [_lastMintedNftId, setLastMintedNftId] = useState('');
+    const [_response, set_response] = useState('');
+    const [_response2, set_response2] = useState('');
+    const [_response3, setResponse3] = useState('');
 
-// Create the Express app
-const app = express();
+    const [disableCreateMerkle, setDisableCreateMerkle] = useState(false);
+    const [disableCreateCollection, setDisableCreateCollection] = useState(false);
+    const [disableMintToCollection, setDisableMintToCollection] = useState(false);
 
-// Environment variables
-const preQuicknodeEndpoint1 = process.env.HELIUS_RPC1;
-const preQuicknodeEndpoint2 = process.env.HELIUS_RPC2;
-const rpcEndPoint = process.env.RPC_ENDPOINT;
-const pricePerNFT = process.env.AMOUNT;
-const merkleTreeLink = UMIPublicKey(process.env.MERKLE_TREE);
-const collectionMint = UMIPublicKey(process.env.TOKEN_ADDRESS);
-const AUTHORIZED_WALLET = process.env.AIRDROP_ADMIN_WALLET;
+    const perNFTPrice = process.env.NEXT_PUBLIC_PER_NFT_PRICE;
+    const adminWalletAddress = process.env.NEXT_PUBLIC_ADMIN_WALLET;
 
-const MAX_SUPPLY = 10000;
+    console.log("perNFTPrice : " + perNFTPrice);
+    console.log("adminWalletAddress : " + adminWalletAddress);
 
-// Store connected SSE clients
-const clients = [];
+    // State
+    const [lastMintedNft, setLastMintedNft] = useState<{
+        id: string;
+        imageUrl: string;
+        name: string;
+    } | null>(null);
 
-// Configure middleware
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+    const [totalMinted, setTotalMinted] = useState(0);
+    const MAX_SUPPLY = 10000;
 
-// CORS setup
-const corsOptions = {
-  origin: ['https://puffdog-fe.vercel.app'], // your frontend domain
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true, // if your frontend needs cookies or auth
-  optionsSuccessStatus: 200
-};
+    const [notification, setNotification] = useState<{
+        message: string;
+        type: 'success' | 'error' | 'info';
+    } | null>(null);
 
-app.use(cors(corsOptions));
-//app.options('*', cors(corsOptions));
+    const [copyAlert, setCopyAlert] = useState(false);
 
-// Security and utility middleware
-app.use(helmet());
-app.use(upload());
-app.use(morgan('combined'));
+    // UMI instance
+    const umi = useMemo(() => {
+        const umiInstance = createUmi(quicknodeEndpoint)
+            .use(mplTokenMetadata())
+            .use(mplBubblegum());
 
-// SSE endpoint
-app.get('/api/events', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  res.write(': Connected\n\n');
-  clients.push(res);
-
-  req.on('close', () => {
-    clients.splice(clients.indexOf(res), 1);
-  });
-});
-
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', 'https://puffdog-fe.vercel.app');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
-
-
-// Health check endpoint
-app.get('/api/', (req, res) => {
-  console.log("Health check successful");
-  res.send('successful');
-});
-
-
-// Setup Solana/UMI
-const string_key = process.env.STRING_KEY;
-
- const privateKey = convertPrivateKey(string_key)
-
-
-function convertPrivateKey(base58PrivateKey) {
-
-
-  // Decode the base58 private key to get the raw bytes
-  const secretKey = bs58.decode(base58PrivateKey);
-
-  // Create a keypair from the secret key
-  const keypair = Keypair.fromSecretKey(secretKey);
-
-  // Get the full keypair bytes (secret key + public key)
-  const fullKeypair = new Uint8Array([...keypair.secretKey]);
-  //console.log("Extracted KKKK ---- :" + Uint8Array.from(Array.from(fullKeypair)))
-  return Uint8Array.from(Array.from(fullKeypair));
-}
-
-
-const umiKeypairz = {
-  publicKey: UMIPublicKey(privateKey.slice(32, 64)),
-  secretKey: privateKey
-};
-
-const quicknodeEndpoint = `${preQuicknodeEndpoint1}?api-key=${preQuicknodeEndpoint2}`;
-
-const umi = createUmi(quicknodeEndpoint)
-  .use(keypairIdentity(umiKeypairz))
-  .use(mplTokenMetadata())
-  .use(mplBubblegum());
-
-// Helper function to get current mint count
-async function getCurrentMintCount() {
-  try {
-    const treeAccount = await fetchMerkleTree(umi, merkleTreeLink);
-    const currentCount = Number(treeAccount.tree.sequenceNumber);
-    console.log("currentCount:", currentCount);
-    return currentCount;
-  } catch (error) {
-    console.error("Error fetching mint count:", error);
-    throw error;
-  }
-}
-
-const merkleTreeSigner = generateSigner(umi);
-
-async function getTransactionAmount(txSignature) {
-  const connection = new Connection(quicknodeEndpoint); // Use your RPC endpoint
-
-  // Fetch the transaction
-  const tx = await connection.getTransaction(txSignature, {
-    commitment: 'confirmed',
-    maxSupportedTransactionVersion: 0,
-  });
-
-  if (!tx) {
-    throw new Error('Transaction not found');
-  }
-
-  // Extract pre & post balances to compute the transfer amount
-  const accountKeys = tx.transaction.message.accountKeys;
-  const preBalances = tx.meta.preBalances;
-  const postBalances = tx.meta.postBalances;
-
-  // The sender is usually the first account (fee payer)
-  const sender = accountKeys[0].toString();
-  const senderPreBalance = preBalances[0];
-  const senderPostBalance = postBalances[0];
-
-  // The amount sent is the difference minus fees
-  const fee = tx.meta.fee;
-  const amountLamports = senderPreBalance - senderPostBalance - fee;
-  const amountSOL = amountLamports / LAMPORTS_PER_SOL;
-
-  return amountSOL;
-}
-
-async function loadMintTrackingData() {
-  try {
-    const data = await fs.readFile(MINT_TRACKING_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    // If file doesn't exist or has invalid JSON, create a new structure
-    const initialData = {
-      mintedIds: [],
-      lastMintedId: -1  // -1 indicates no mints have occurred yet
-    };
-    
-    // Write the initial structure to file
-    await fs.writeFile(MINT_TRACKING_FILE, JSON.stringify(initialData, null, 2));
-    return initialData;
-  }
-}
-
-// Function to check if an ID has been minted
-async function isIdMinted(id) {
-  const trackingData = await loadMintTrackingData();
-  return trackingData.mintedIds.includes(id);
-}
-
-// Function to get the next ID to mint
-async function getNextMintId() {
-  const trackingData = await loadMintTrackingData();
-  return trackingData.lastMintedId + 1;
-}
-
-// Function to record a new minted ID
-async function recordMintedId(id) {
-  const trackingData = await loadMintTrackingData();
-  
-  // Add the ID to the array if it's not already there
-  if (!trackingData.mintedIds.includes(id)) {
-    trackingData.mintedIds.push(id);
-  }
-  
-  // Update the last minted ID
-  trackingData.lastMintedId = id;
-  
-  // Write the updated data back to the file
-  await fs.writeFile(MINT_TRACKING_FILE, JSON.stringify(trackingData, null, 2));
-}
-
-// Mint endpoint
-app.post('/api/mint', async (req, res) => {
-  try {
-    const { userWallet, paymentSignature } = req.body;
-
-    const amount = await getTransactionAmount(paymentSignature);
-    console.log(`Payment amount: ${amount} SOL`);
-
-    if((amount*LAMPORTS_PER_SOL) != pricePerNFT){
-      return res.status(409).json({
-        success: false,
-        error: {
-          code: 'Not Enough Funds',
-          message: 'Not enough amount sent',
-          txid: paymentSignature,
-          timestamp: new Date().toISOString(),
-          resolution: 'Use our official website'
+        // Only add wallet identity if wallet is connected
+        if (wallet.publicKey && wallet.signTransaction) {
+            umiInstance.use(walletAdapterIdentity(wallet));
         }
-      });
-    }
 
-    console.log("Received mint request:", { userWallet, paymentSignature });
+        return umiInstance;
+    }, [quicknodeEndpoint, wallet.publicKey, wallet.signTransaction]);
 
-    
-    if (txTracker.isTransactionProcessed(paymentSignature)) {
-      return res.status(409).json({
-        success: false,
-        error: {
-          code: 'DUPLICATE_TRANSACTION',
-          message: 'This transaction ID has already been used',
-          txid: paymentSignature,
-          timestamp: new Date().toISOString(),
-          resolution: 'Please use a new, unique transaction'
-        }
-      });
-    }
-
-    try {
-      const txnData = await getWalletAddressesFromTransaction(paymentSignature);
-      console.log('Transaction data verified');
-    } catch (err) {
-      console.error('Failed to verify transaction:', err);
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'TRANSACTION_VERIFICATION_FAILED',
-          message: 'Could not verify the payment transaction',
-          details: err.message
-        }
-      });
-    }
-    
-    // Get the next mint ID from our tracking system
-    let nftNumber = await getNextMintId();
-    
-    // Verify this ID hasn't been minted already as an extra precaution
-    if (await isIdMinted(nftNumber)) {
-      console.error(`NFT ID ${nftNumber} has already been minted. Finding next available ID.`);
-      // Find the next available ID that hasn't been minted
-      while (await isIdMinted(nftNumber)) {
-        nftNumber++;
-      }
-    }
-
-    try {
-      if (nftNumber >= 10000) {
-        console.error('Max supply reached');
-        return res.status(410).json({
-          success: false,
-          error: {
-            code: 'Limit Reached',
-            message: 'Maximum NFT supply has been reached',
-            txid: paymentSignature,
-            timestamp: new Date().toISOString(),
-            resolution: 'Contact admin for the refund'
-          }
-        });
-      }
-
-    } catch (err) {
-      console.log(err);
-    }
-
-    // NFT MINTING PROCESS
-    const nftName = `PUFF DOG #${nftNumber.toString().padStart(4, '0')}`;
-
-    console.log(`Minting NFT: ${nftName} (${nftNumber})`);
-
-    const uintSig = await transactionBuilder()
-      .add(setComputeUnitLimit(umi, { units: 800_000 }))
-      .add(await mintToCollectionV1(umi, {
-        leafOwner: publicKey(userWallet),
-        merkleTree: merkleTreeLink,
-        collectionMint: collectionMint,
-        metadata: {
-          name: nftName,
-          symbol:'PUFF',
-          uri: `https://peach-binding-gamefowl-763.mypinata.cloud/ipfs/bafybeiby6jda3blcbvpizf6hxk5wjzmfsx5x3z6xiqz7sfim3i2ciayjoy/${nftNumber}.json`,
-          sellerFeeBasisPoints: 500,
-          collection: {
-            key: collectionMint,
-            verified: true
-          },
-          creators: [{
-            address: umi.identity.publicKey,
-            verified: true,
-            share: 100
-          }],
-        },
-      }));
-
-    const { signature: mintSignature } = await uintSig.sendAndConfirm(umi, {
-      confirm: { commitment: "finalized" },
-      send: {
-        skipPreflight: true,
-      }
-    });
-
-    const leaf = await parseLeafFromMintToCollectionV1Transaction(
-      umi,
-      mintSignature
+    // Debounced notification to prevent flickering
+    const debouncedSetNotification = useMemo(() =>
+        debounce(setNotification, 300), []
     );
 
-    const assetId = findLeafAssetIdPda(umi, {
-      merkleTree: merkleTreeLink,
-      leafIndex: leaf.nonce,
-    })[0];
+    // Error handling
+    useEffect(() => {
+        if (!walletError) return;
 
-    console.log("NFT minted successfully:", {
-      nftNumber,
-      userWallet,
-      mintSignature: mintSignature
-    });
+        console.error('Wallet Error:', walletError);
 
-    // Record the minted ID in our tracking system
-    await recordMintedId(nftNumber);
-    
-    txTracker.addProcessedTransaction(paymentSignature);
+        if (!isUserRejection(walletError)) {
+            debouncedSetNotification({
+                message: walletError.isSendTransactionError
+                    ? 'Transaction failed. Please try again.'
+                    : walletError.message || 'Wallet error occurred',
+                type: 'error'
+            });
+        }
 
-    res.json({
-      success: true,
-      nftId: assetId,
-      imageUrl: `https://peach-binding-gamefowl-763.mypinata.cloud/ipfs/QmY2PNF1rB6k4inLZMUqrt17cH9wpzXqgZ1fFv64SqYcxG/${nftNumber}.png`,
-      name: nftName,
-      details: {
-        paymentVerification: {
-          sender: userWallet,
-          recipient: umi.identity.publicKey,
-          amount: LAMPORTS_PER_SOL * pricePerNFT,
-          transactionId: mintSignature
-        }
-      }
-    });
-  } catch (error) {
-    console.error('Mint error:', {
-      error: error.message,
-      stack: error.stack,
-      body: req.body
-    });
+        const timer = setTimeout(() => setWalletError(null), 3000);
+        return () => clearTimeout(timer);
+    }, [walletError, setWalletError, debouncedSetNotification]);
 
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Mint failed',
-      details: error.details || null
-    });
-  }
-});
-
-app.post('/api/airdrop', async (req, res) => {
-  try {
-    const { userWallet, nftId } = req.body;
-    
-    // Authentication check - only allow the authorized wallet
-    if (req.headers.authorization !== `Bearer ${AUTHORIZED_WALLET}`) {
-      return res.status(401).json({
-        success: false,
-        error: {
-          code: 'UNAUTHORIZED',
-          message: 'Unauthorized access to airdrop endpoint',
-          timestamp: new Date().toISOString()
+    // Fetch mint count
+    async function fetchMintCount() {
+        try {
+            const treeAccount = await fetchMerkleTree(umi, merkleTreeLink);
+            setTotalMinted(Number(treeAccount.tree.sequenceNumber));
+        } catch (error) {
+            console.error("Error fetching mint count:", error);
         }
-      });
-    }
-    
-    console.log("Received airdrop request:", { userWallet, nftId });
-    
-    // Validate inputs
-    if (!userWallet || !nftId) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Wallet address and NFT ID are required',
-          timestamp: new Date().toISOString()
-        }
-      });
-    }
-    
-    // Convert nftId to number if it's a string
-    const nftNumber = typeof nftId === 'string' ? parseInt(nftId, 10) : nftId;
-    
-    // Validate NFT ID
-    if (isNaN(nftNumber) || nftNumber < 0 || nftNumber >= 10000) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'INVALID_NFT_ID',
-          message: 'NFT ID must be a valid number between 0 and 9999',
-          timestamp: new Date().toISOString()
-        }
-      });
-    }
-    
-    // Check if NFT ID has already been minted
-    if (await isIdMinted(nftNumber)) {
-      return res.status(409).json({
-        success: false,
-        error: {
-          code: 'NFT_ALREADY_MINTED',
-          message: `NFT ID ${nftNumber} has already been minted`,
-          timestamp: new Date().toISOString()
-        }
-      });
     }
 
-    // NFT MINTING PROCESS
-    const nftName = `PUFF DOG #${nftNumber.toString().padStart(4, '0')}`;
+    useEffect(() => {
+        fetchMintCount();
+    }, [umi, merkleTreeLink]);
 
-    console.log(`Airdropping NFT: ${nftName} (${nftNumber})`);
+    // Minting function
+    async function mintWithSolPayment() {
+        // Clear previous minted NFT
+        setLastMintedNft(null);
+        let loaderNotificationId: string | undefined;
 
-    const uintSig = await transactionBuilder()
-      .add(setComputeUnitLimit(umi, { units: 800_000 }))
-      .add(await mintToCollectionV1(umi, {
-        leafOwner: publicKey(userWallet),
-        merkleTree: merkleTreeLink,
-        collectionMint: collectionMint,
-        metadata: {
-          name: nftName,
-          uri: `https://peach-binding-gamefowl-763.mypinata.cloud/ipfs/bafybeiby6jda3blcbvpizf6hxk5wjzmfsx5x3z6xiqz7sfim3i2ciayjoy/${nftNumber}.json`,
-          sellerFeeBasisPoints: 500,
-          collection: {
-            key: collectionMint,
-            verified: true
-          },
-          creators: [{
-            address: umi.identity.publicKey,
-            verified: true,
-            share: 100
-          }],
-        },
-      }));
+        try {
+            console.log('[1/6] Starting mint process...');
 
-    const { signature: mintSignature } = await uintSig.sendAndConfirm(umi, {
-      confirm: { commitment: "finalized" },
-      send: {
-        skipPreflight: true,
-      }
-    });
+            // 1. Validate wallet connection
+            if (!wallet.publicKey || !wallet.signTransaction) {
+                console.error('Wallet not connected!');
+                notify({ type: 'error', message: 'Wallet not connected!' });
+                return;
+            }
 
-    const leaf = await parseLeafFromMintToCollectionV1Transaction(
-      umi,
-      mintSignature
-    );
+            // 2. Check mint limits
+            console.log('[2/6] Checking mint limits...');
+            if (totalMinted >= Number(MAX_SUPPLY)) {
+                console.error('Max supply reached');
+                notify({ type: 'error', message: 'All NFTs minted!' });
+                return;
+            }
 
-    const assetId = findLeafAssetIdPda(umi, {
-      merkleTree: merkleTreeLink,
-      leafIndex: leaf.nonce,
-    })[0];
+            // 3. Check existing mints by this wallet
+            console.log('[3/6] Checking existing mints...');
+            const assets = await umi.rpc.getAssetsByOwner({
+                owner: publicKey(wallet.publicKey.toString()),
+                sortBy: { sortBy: 'created', sortDirection: 'desc' },
+            });
 
-    console.log("NFT airdropped successfully:", {
-      nftNumber,
-      userWallet,
-      mintSignature: mintSignature
-    });
+            const mintedCount = assets.items.filter(asset =>
+                asset.compression.compressed &&
+                asset.compression.tree === merkleTreeLink.toString() &&
+                asset.grouping.some(g => g.group_value === tokenAddress.toString())
+            ).length;
 
-    // Record the minted ID in our tracking system WITHOUT updating lastMintedId
-    await recordAirdropMintedId(nftNumber);
+            console.log(`User has minted ${mintedCount}/10 NFTs`);
+            if (mintedCount >= 10000) {
+                console.error('Mint limit reached for wallet');
+                notify({ type: 'error', message: 'You can only mint 10 NFTs per wallet!' });
+                return;
+            }
 
-    res.json({
-      success: true,
-      nftId: assetId,
-      imageUrl: `https://peach-binding-gamefowl-763.mypinata.cloud/ipfs/QmY2PNF1rB6k4inLZMUqrt17cH9wpzXqgZ1fFv64SqYcxG/${nftNumber}.png`,
-      name: nftName,
-      details: {
-        airdropDetails: {
-          recipient: userWallet,
-          transactionId: mintSignature
+            // 4. Process payment
+            console.log('[4/6] Processing payment...');
+            debouncedSetNotification({ message: 'Processing payment...', type: 'info' });
+
+            const adminWallet = new PublicKey(adminWalletAddress);
+            const transferInstruction = SystemProgram.transfer({
+                fromPubkey: wallet.publicKey,
+                toPubkey: adminWallet,
+                lamports: LAMPORTS_PER_SOL * Number(perNFTPrice)
+            });
+
+            const priorityFeeInstruction = ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: 100000
+            });
+
+            let transaction = new Transaction()
+                .add(priorityFeeInstruction)
+                .add(transferInstruction);
+
+            const { blockhash } = await connection.getLatestBlockhash();
+            transaction.recentBlockhash = blockhash;
+            transaction.feePayer = wallet.publicKey;
+
+            console.log('Sending transaction...');
+            const signature = await wallet.sendTransaction(transaction, connection);
+            const txid = signature.toString();
+            console.log(`Payment TXID: ${txid}`);
+
+            debouncedSetNotification({ message: 'Processing payment...', type: 'info' });
+
+            // Wait for payment confirmation
+            console.log('Waiting for payment confirmation...');
+            await connection.confirmTransaction(signature, 'confirmed');
+            console.log('Payment confirmed on-chain');
+
+            // 5. Call backend API to mint NFT - Keep loader visible
+            console.log('[5/6] Calling backend mint API...');
+            debouncedSetNotification({ message: 'Minting NFT...', type: 'info' });
+
+            // Create payload object
+            const payload = {
+                userWallet: wallet.publicKey.toString(),
+                paymentSignature: signature
+            };
+
+            // Using axios instead of fetch
+            const response = await axios.post('https://puffdog-be.onrender.comapi/mint', payload, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                //  timeout: 25000 // 25 seconds timeout
+            });
+
+            // Access data directly from axios response
+            const _response = response.data;
+            const nftId = _response.nftId;
+            const imageUrl = _response.imageUrl;
+            const name = _response.name;
+
+            console.log("_response : " + JSON.stringify(_response));
+
+            console.log(`Minted NFT: ${name} (${nftId})`);
+            debouncedSetNotification({ message: `Minted ${name} (${nftId})!`, type: 'success' });
+
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            const mintTxid = _response.details.paymentVerification.transactionId;
+
+            // Update UI with minted NFT
+            console.log('[6/6] Updating UI...');
+            setLastMintedNft({ id: nftId, imageUrl, name });
+            setLastMintedNftId(nftId);
+            await fetchMintCount(); // Refresh mint count
+
+            console.log('Mint process completed successfully');
+
+        } catch (error: any) {
+            console.error('Minting error:', error);
+
+            if (error.message?.includes('User rejected') || error.message?.includes('rejected')) {
+                console.log('User rejected transaction');
+                return;
+            }
+
+            // For axios errors, the error details are structured differently
+            const errorMessage = error.response?.data?.error || error.message || 'Transaction failed';
+            debouncedSetNotification({ message: `Mint Failed: ${errorMessage}`, type: 'error' });
         }
-      }
-    });
-  } catch (error) {
-    console.error('Airdrop error:', {
-      error: error.message,
-      stack: error.stack,
-      body: req.body
-    });
-
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Airdrop failed',
-      details: error.details || null
-    });
-  }
-});
-
-async function recordAirdropMintedId(id) {
-  const trackingData = await loadMintTrackingData();
-  
-  // Add the ID to the array if it's not already there
-  if (!trackingData.mintedIds.includes(id)) {
-    trackingData.mintedIds.push(id);
-  }
-  
-  // Note: We do NOT update lastMintedId for airdrops
-  
-  // Write the updated data back to the file
-  await fs.writeFile(MINT_TRACKING_FILE, JSON.stringify(trackingData, null, 2));
-}
-
-app.post('/api/createMerkleTree', async (req, res) => {
-  try {
-    const builder = await createTree(umi, {
-      merkleTree: merkleTreeSigner,
-      maxDepth: 14,
-      maxBufferSize: 64,
-      public: false
-    });
-
-    await builder.sendAndConfirm(umi);
-
-    // Store values globally
-    treeCreator = umi.identity.publicKey.toString();
-    treeSigner = merkleTreeSigner;
-    treeAddress = merkleTreeSigner.publicKey.toString();
-
-    console.log("Tree Creator:", treeCreator);
-    console.log("Tree Signer:", treeSigner.publicKey.toString());
-    console.log("Tree Address:", treeAddress);
-
-    res.json({
-      success: true,
-      treeCreator: treeCreator,
-      treeSigner: treeSigner,
-      treeAddress: treeAddress
-    });
-
-  } catch (error) {
-    console.error("Error creating Merkle Tree:", error);
-  }
-});
-
-app.post('/api/createCollection', async (req, res) => {
-  try {
-    if (!umi) {
-      return res.status(500).json({
-        success: false,
-        error: "UMI not initialized. Check environment variables."
-      });
     }
 
-    const collectionMint = generateSigner(umi);
-
-    const response = await createNft(umi, {
-      mint: collectionMint,
-      name: `PUFF DOG NFT COLLECTION`,
-      symbol:'PUFF',
-      uri: 'https://peach-binding-gamefowl-763.mypinata.cloud/ipfs/bafkreieqjeswtebkogavxlycpbcng2ixa4alhx7wultfpqoycjjqu3mr6m',
-      sellerFeeBasisPoints: percentAmount(0),
-      isCollection: true,
-      updateAuthority: umi.identity,
-    }).sendAndConfirm(umi);
-
-    // Get the mint address (public key) of the collection
-    const collectionMintAddress = collectionMint.publicKey.toString();
-
-    // Handle signature conversion
-    let signature;
-    try {
-      if (response.signature) {
-        if (typeof response.signature === 'object' && response.signature !== null) {
-          if (typeof response.signature.toString === 'function') {
-            signature = response.signature.toString();
-          } else {
-            signature = bs58.encode(Buffer.from(response.signature));
-          }
-        } else {
-          signature = String(response.signature);
+    // Helper function to validate if a string is a valid Solana public key
+    function isValidPublicKey(address: string): boolean {
+        try {
+            new PublicKey(address);
+            return true;
+        } catch (error) {
+            return false;
         }
-      } else {
-        signature = 'Signature not available';
-      }
-    } catch (error) {
-      console.error("Error converting signature:", error);
-      signature = 'Error converting signature';
     }
 
-    console.log("Collection created successfully:", {
-      collectionMint: collectionMintAddress,
-      transactionSignature: signature
-    });
+    // Helper function to add to airdrop history (implement this according to your state management)
+    function addToAirdropHistory(airdropInfo: {
+        id: string | number;
+        recipient: string;
+        timestamp: string;
+        transactionId: string;
+    }) {
+        // This is just a placeholder - implement according to your app's state management
+        // For example, if using React state:
+        // setAirdropHistory(prevHistory => [...prevHistory, airdropInfo]);
+        console.log('Added to airdrop history:', airdropInfo);
+    }
 
-    res.json({
-      success: true,
-      collectionMint: collectionMintAddress,
-      transactionSignature: signature
-    });
+    async function createMerkleTree() {
+        // Clear previous minted NFT
+        setDisableCreateMerkle(true);
+        try {
 
-  } catch (error) {
-    console.error("Error creating collection:", error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to create collection'
-    });
-  }
-});
+            const response = await axios.post('https://puffdog-be.onrender.comapi/createMerkleTree', {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                //  timeout: 25000 // 25 seconds timeout
+            });
 
-app.post('/api/mintToCollection', async (req, res) => {
-  try {
-    const uintSig = await transactionBuilder()
-      .add(setComputeUnitLimit(umi, { units: 800_000 }))
-      .add(await mintToCollectionV1(umi, {
-        leafOwner: umi.identity.publicKey,
-        merkleTree: merkleTreeLink,
-        collectionMint: collectionMint, // This is your collection mint address
-        metadata: {
-          name: "PUFF DOG NFT COLLECTION",
-          symbol:'PUFF',
-          uri: "https://peach-binding-gamefowl-763.mypinata.cloud/ipfs/bafkreieqjeswtebkogavxlycpbcng2ixa4alhx7wultfpqoycjjqu3mr6m",
-          sellerFeeBasisPoints: 0,
-          collection: { key: collectionMint, verified: true },
-          creators: [
-            { address: umi.identity.publicKey, verified: true, share: 100 },
-          ],
-        },
-      }));
+            const _response = response.data;
+            set_response(JSON.stringify(_response.treeAddress));
+            console.log("_response : " + JSON.stringify(_response.success));
+            console.log("treeAddress : " + JSON.stringify(_response.treeAddress));
+            console.log("_response : " + JSON.stringify(_response.success));
 
-    const { signature } = await uintSig.sendAndConfirm(umi, {
-      confirm: { commitment: "finalized" },
-    });
-
-    /*const txid = bs58.encode(Buffer.from(signature));
-    const leaf = await parseLeafFromMintToCollectionV1Transaction(umi, signature);
-
-    // Get the asset ID (equivalent to mint address for cNFTs)
-    const assetId = findLeafAssetIdPda(umi, {
-      merkleTree: merkleTreeLink,
-      leafIndex: leaf.nonce,
-    })[0];
-
-    // Get the asset details
-    const rpcAsset = await umi.rpc.getAsset(assetId);
-
-    res.json({
-      success: true,
-      collectionMint: collectionMint.toString(), // The collection mint address
-      nft: {
-        assetId: assetId.toString(), // The cNFT identifier (similar to mint address)
-        txid: txid, // Transaction ID
-        leafIndex: leaf.nonce, // Position in the merkle tree
-        metadataUri: rpcAsset.content.json_uri, // NFT metadata URI
-        owner: rpcAsset.ownership.owner, // Current owner
-        // Include any other relevant details from rpcAsset
-      }
-    });
-*/
-
-    console.log("signature : " + signature);
-
-    res.json({
-      success: true,
-      signature: signature
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      success: false,
-      error: err instanceof Error ? err.message : 'Minting failed'
-    });
-  }
-});
-
-
-// Helper function to get wallet addresses from transaction
-async function getWalletAddressesFromTransaction(txnId) {
-  try {
-    const rpcUrl = rpcEndPoint;
-
-    const response = await axios.post(rpcUrl, {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'getTransaction',
-      params: [
-        txnId,
-        {
-          encoding: 'jsonParsed',
-          commitment: 'confirmed'
+        } catch (err) {
+            console.log(err);
         }
-      ]
-    });
-
-    if (response.data.error) {
-      throw new Error(response.data.error.message);
     }
 
-    const transaction = response.data.result;
+    async function createCollection() {
+        // Clear previous minted NFT
+        setDisableCreateCollection(true);
 
-    if (!transaction) {
-      throw new Error('Transaction not found');
+        try {
+
+            const response = await axios.post('https://puffdog-be.onrender.comapi/createCollection', {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                //  timeout: 25000 // 25 seconds timeout
+            });
+
+            const _response = response.data;
+            set_response2(JSON.stringify(_response.collectionMint));
+
+        } catch (err) {
+            console.log(err);
+        }
     }
 
-    // Extract account information
-    const accountKeys = transaction.transaction.message.accountKeys;
+    async function mintToCollection() {
+        // Clear previous minted NFT
+        setDisableMintToCollection(true);
+        try {
 
-    // Get signer addresses
-    const signers = accountKeys
-      .filter(account => account.signer)
-      .map(account => account.pubkey);
+            const response = await axios.post('https://puffdog-be.onrender.comapi/mintToCollection', {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                //  timeout: 25000 // 25 seconds timeout
+            });
 
-    // Get writable addresses
-    const writableAccounts = accountKeys
-      .filter(account => account.writable)
-      .map(account => account.pubkey);
+            const _response = response.data;
+            console.log("Minted NFT Asset ID:", _response);
+            // You can now use assetId in your state or elsewhere
+            setResponse3(_response);
 
-    return {
-      allAddresses: accountKeys.map(account => account.pubkey),
-      signers: signers,
-      writableAccounts: writableAccounts,
-      feePayer: accountKeys[0].pubkey,
-      meta: transaction.meta
+        } catch (err) {
+            console.log(err);
+        }
+    }
+
+    // Utility functions
+    const isUserRejection = (error: any): boolean => {
+        if (!error) return false;
+        const errorMessage = error.message?.toString()?.toLowerCase() || '';
+        const errorName = error.name?.toString()?.toLowerCase() || '';
+        return (
+            errorMessage.includes('user rejected') ||
+            errorMessage.includes('rejected') ||
+            errorName.includes('user rejected')
+        );
     };
-  } catch (error) {
-    console.error('Error fetching transaction:', error.message);
-    throw error;
-  }
-}
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Server error:', err);
-  res.status(500).json({ error: 'Internal server error' });
-});
+    const handleCopy = (text: string) => {
+        navigator.clipboard.writeText(text);
+        setCopyAlert(true);
+        setTimeout(() => setCopyAlert(false), 2000);
+    };
 
-// Start the server
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+    // Memoized styles
+    const walletButtonStyle = useMemo(() => ({
+        backgroundColor: 'white',
+        color: 'black',
+        borderRadius: '8px',
+        padding: '10px 20px',
+        fontSize: '16px',
+        fontWeight: '600',
+        transition: 'all 0.3s ease',
+        border: '1px solid #e5e7eb'
+    }), []);
 
-module.exports = app;
+    return (
+        <div>
+            <div className="mint-details">
+                <div className="mint-info">
+                    <span id="txtColor">{totalMinted - 1} / 10,000 Minted</span>
+                    <span id="txtColor">≡ {Number(perNFTPrice)} SOL* + GAS</span>
+                </div>
+
+                {lastMintedNft && (
+                    <div style={{
+                        margin: '0 auto 20px auto',
+                        padding: '20px',
+                        background: 'rgba(255, 255, 255, 0.9)',
+                        borderRadius: '12px',
+                        textAlign: 'center',
+                        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+                        maxWidth: '300px',
+                        fontFamily: 'monospace',
+                        position: 'relative'
+                    }}>
+                        <div
+                            style={{
+                                fontSize: '16px',
+                                marginBottom: '15px',
+                                color: '#000',
+                                fontWeight: '600',
+                                cursor: 'pointer',
+                                display: 'inline-block',
+                                padding: '5px 10px',
+                                backgroundColor: '#f5f5f5',
+                                borderRadius: '4px'
+                            }}
+                            onClick={() => handleCopy(lastMintedNft.id)}
+                            title="Click to copy"
+                        >
+                            Minted ID:<br />
+                            {lastMintedNft.id.substring(0, 4)}...{lastMintedNft.id.substring(lastMintedNft.id.length - 6)}
+                        </div>
+                        {copyAlert && (
+                            <div style={{
+                                position: 'absolute',
+                                top: '10px',
+                                right: '10px',
+                                background: '#4CAF50',
+                                color: 'white',
+                                padding: '5px 10px',
+                                borderRadius: '4px',
+                                fontSize: '12px',
+                                zIndex: 100
+                            }}>
+                                Copied!
+                            </div>
+                        )}
+                        <a
+                            href={`https://solana.fm/address/${lastMintedNft.id}/transactions?cluster=mainnet-alpha`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ textDecoration: 'none' }}
+                        >
+                            <div style={{
+                                display: 'flex',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                                marginTop: '10px'
+                            }}>
+                                <img
+                                    src={lastMintedNft.imageUrl}
+                                    alt={lastMintedNft.name}
+                                    style={{
+                                        width: '200px',
+                                        height: '200px',
+                                        borderRadius: '8px',
+                                        border: '2px solid #ddd',
+                                        objectFit: 'cover',
+                                        display: 'block'
+                                    }}
+                                    onError={(e) => {
+                                        const target = e.target as HTMLImageElement;
+                                        target.src = 'https://placehold.co/200x200?text=NFT+Image';
+                                    }}
+                                />
+                            </div>
+                        </a>
+                        <p style={{
+                            marginTop: '12px',
+                            fontSize: '16px',
+                            color: '#000',
+                            fontWeight: '500'
+                        }}>
+                            {lastMintedNft.name}
+                        </p>
+                    </div>
+                )}
+
+                <div className="wallet-button-container">
+                    <WalletMultiButtonDynamic style={walletButtonStyle} />
+                </div>
+
+                {wallet.connected && (
+                    <button className="mint-button" onClick={mintWithSolPayment}>
+                        Mint Now
+                    </button>
+                )}
+
+                {notification && (
+                    <div className={`notification ${notification.type}`}>
+                        {notification.message}
+                    </div>
+                )}
+            </div>
+
+            <div>
+                <div>
+                    <button
+                        onClick={createMerkleTree}
+                        id="otherBtns"
+                        disabled={disableCreateMerkle}
+                    >
+                        {disableCreateMerkle ? 'Creating MerkleTree...' : 'Create MerkleTree'}
+                    </button>
+                    <div id="response">{_response}</div>
+                </div>
+
+                <div>
+                    <button
+                        onClick={createCollection}
+                        id="otherBtns"
+                        disabled={disableCreateCollection}
+                    >
+                        {disableCreateCollection ? 'Creating Collection...' : 'Create Collection'}
+                    </button>
+                    <div id="coloumn">
+                        <div id="response">
+                            {_response2}
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <button
+                        onClick={mintToCollection}
+                        id="otherBtns"
+                        disabled={disableMintToCollection}
+                    >
+                        {disableMintToCollection ? 'Minting...' : 'Mint To Collection'}
+                    </button>
+                </div>
+                <div id="response">
+                    {_response3 && <>Collection NFT Minted</>}
+                </div>
+            </div>
+
+            <style jsx>{`
+                .mint-details {
+                    max-width: 400px;
+                    margin: 0 auto;
+                    text-align: center;
+                }
+                .nft-display {
+                    background: rgba(255, 255, 255, 0.9);
+                    border-radius: 12px;
+                    padding: 20px;
+                    margin: 20px auto;
+                }
+                .nft-id {
+                    cursor: pointer;
+                    margin-bottom: 15px;
+                    padding: 5px 10px;
+                    background: #f5f5f5;
+                    border-radius: 4px;
+                    display: inline-block;
+                }
+                .copy-alert {
+                    position: absolute;
+                    top: 10px;
+                    right: 10px;
+                    background: #4CAF50;
+                    color: white;
+                    padding: 5px 10px;
+                    border-radius: 4px;
+                }
+                .mint-button {
+                    background: linear-gradient(45deg, #6e45e2, #88d3ce);
+                    color: white;
+                    border: none;
+                    padding: 12px 24px;
+                    font-size: 16px;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    margin-top: 20px;
+                    transition: all 0.3s ease;
+                }
+                .mint-button:hover {
+                    transform: scale(1.05);
+                }
+                .notification {
+                    margin-top: 10px;
+                    padding: 5px;
+                    border-radius: 4px;
+                    font-family: monospace;
+                }
+                .notification.error {
+                    color: #F44336;
+                }
+                .notification.success {
+                    color: #4CAF50;
+                }
+                .notification.info {
+                    color: #2196F3;
+                }
+            `}</style>
+
+            <AirdropPanel />
+
+        </div>
+    );
+};
