@@ -387,61 +387,108 @@ export const TreeBubble: FC = () => {
     }), []);
 
 async function verifyCollection() {
-        setDisableVerify(true);
-        setErrorVerify('');
-        set_responseVerify('Processing verification...');
-        
-        try {
-            // Use the deployed API endpoint instead of localhost
-            const apiUrl = process.env.NODE_ENV === 'production' 
-                ? 'https://puffdog-be.onrender.com/api/verifyCNFTCollection' 
-                : 'https://puffdog-be.onrender.com/api/verifyCNFTCollection';
-                
-            const response = await axios.post(
-                apiUrl,
-                {
-                    leafIndex: 0 // You might want to make this dynamic in the future
+    setDisableVerify(true);
+    setErrorVerify('');
+    set_responseVerify(<div className="flex items-center gap-2">
+        <span>Processing verification...</span>
+        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+    </div>);
+    
+    try {
+        const apiUrl = 'https://puffdog-be.onrender.com/api/verifyCNFTCollection';
+        const leafIndex = 0; // Consider making this dynamic based on user input
+            
+        const response = await axios.post(
+            apiUrl,
+            { leafIndex },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
                 },
-                {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                    },
-                    timeout: 60000 // Increase timeout for larger transactions
-                }
+                timeout: 120000 // 2 minutes timeout for large transactions
+            }
+        );
+        
+        const data = response.data;
+        
+        if (data.success) {
+            const explorerUrl = `https://explorer.solana.com/tx/${data.transactionSignature}?cluster=devnet`;
+            
+            set_responseVerify(
+                <div className="space-y-2">
+                    <p className="font-medium">✅ Verification successful!</p>
+                    <a 
+                        href={explorerUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:underline"
+                    >
+                        View transaction: {data.transactionSignature.slice(0, 8)}...{data.transactionSignature.slice(-8)}
+                    </a>
+                    {data.lutAddress && (
+                        <p className="text-sm text-gray-400">
+                            Address Lookup Table used: {data.lutAddress.slice(0, 8)}...{data.lutAddress.slice(-8)}
+                        </p>
+                    )}
+                    {data.message && (
+                        <p className="text-sm text-gray-400">{data.message}</p>
+                    )}
+                </div>
             );
             
-            const data = response.data;
-            
-            if (data.success) {
-                set_responseVerify(`Verification successful! Transaction: ${data.transactionSignature.slice(0, 8)}...`);
-                console.log("Full response:", data);
-            } else {
-                setErrorVerify(`Verification failed: ${data.error || 'Unknown error'}`);
+            console.log("Verification details:", {
+                assetId: data.assetId,
+                collectionMint: data.collectionMint,
+                leafIndex: data.leafIndex,
+                signature: data.transactionSignature,
+                lutUsed: data.lutAddress || 'None'
+            });
+        } else {
+            setErrorVerify(
+                <div className="text-red-400">
+                    ❌ Verification failed: {data.error || 'Unknown error'}
+                    {data.details && (
+                        <p className="text-sm text-red-300">{data.details}</p>
+                    )}
+                </div>
+            );
+            if (data.details) {
+                console.error("Server error details:", data.details);
             }
-        } catch (err) {
-            console.error("Verification error:", err);
-            
-            // Better error handling
-            let errorMessage = 'An error occurred during verification.';
-            
-            if (err.response) {
-                // Server responded with an error
-                errorMessage = err.response.data.error || err.response.data.message || errorMessage;
-                console.log("Error response data:", err.response.data);
-            } else if (err.request) {
-                // Request was made but no response
-                errorMessage = 'No response from server. Please check your connection.';
-            } else {
-                // Error in setting up request
-                errorMessage = err.message;
-            }
-            
-            setErrorVerify(errorMessage);
-        } finally {
-            setDisableVerify(false);
         }
+    } catch (err) {
+        console.error("Verification error:", err);
+        
+        let errorMessage = 'An error occurred during verification.';
+        
+        if (err.response) {
+            // Server responded with an error
+            const serverError = err.response.data;
+            errorMessage = serverError.error || 
+                          serverError.message || 
+                          (serverError.details ? 'Server error: ' + serverError.details : errorMessage);
+            
+            console.error("Server error details:", serverError);
+        } else if (err.request) {
+            // Request was made but no response
+            if (err.code === 'ECONNABORTED') {
+                errorMessage = 'Request timeout. The verification is taking longer than expected. Please try again.';
+            } else {
+                errorMessage = 'No response from server. Please check your connection.';
+            }
+        } else {
+            // Error in setting up request
+            errorMessage = err.message;
+        }
+        
+        setErrorVerify(
+            <span className="text-red-400">❌ {errorMessage}</span>
+        );
+    } finally {
+        setDisableVerify(false);
     }
+}
         
     
     return (
