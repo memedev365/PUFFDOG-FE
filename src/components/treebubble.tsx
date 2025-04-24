@@ -400,7 +400,7 @@ async function verifyCollection() {
             const response = await axios.post(
                 apiUrl,
                 {
-                    leafIndex: 0 // You might want to make this dynamic in the future
+                    leafIndex: 1 // You might want to make this dynamic in the future
                 },
                 {
                     headers: {
