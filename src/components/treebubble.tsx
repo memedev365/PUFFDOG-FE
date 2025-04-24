@@ -54,7 +54,7 @@ export const TreeBubble: FC = () => {
     const adminWalletAddress = process.env.NEXT_PUBLIC_ADMIN_WALLET;
 
     const [disableVerify, setDisableVerify] = useState(false);
-    const [errorVerify, setErrorVerify] = useState(false);
+    const [errorVerify, setErrorVerify] = useState('');
     const [_responseVerify, set_responseVerify] = useState('');
     
     console.log("perNFTPrice : " + perNFTPrice);
@@ -386,29 +386,60 @@ export const TreeBubble: FC = () => {
         border: '1px solid #e5e7eb'
     }), []);
 
-     async function verifyCollection() {
+async function verifyCollection() {
         setDisableVerify(true);
+        setErrorVerify('');
+        set_responseVerify('Processing verification...');
+        
         try {
+            // Use the deployed API endpoint instead of localhost
+            const apiUrl = process.env.NODE_ENV === 'production' 
+                ? 'https://puffdog-be.onrender.com/api/verifyCNFTCollection' 
+                : 'https://puffdog-be.onrender.com/api/verifyCNFTCollection';
+                
             const response = await axios.post(
-                'https://puffdog-be.onrender.com/api/verifyCNFTCollection',
+                apiUrl,
                 {
-                    leafIndex: 0 // <-- your hardcoded number here
+                    leafIndex: 0 // You might want to make this dynamic in the future
                 },
                 {
                     headers: {
                         'Content-Type': 'application/json',
                         'Accept': 'application/json',
                     },
+                    timeout: 60000 // Increase timeout for larger transactions
                 }
             );
-            setDisableVerify(false);
-            const _response = response.data;
-            set_responseVerify(JSON.stringify(_response.message));
-            console.log("_response : " + JSON.stringify(_response.success));
+            
+            const data = response.data;
+            
+            if (data.success) {
+                set_responseVerify(`Verification successful! Transaction: ${data.transactionSignature.slice(0, 8)}...`);
+                console.log("Full response:", data);
+            } else {
+                setErrorVerify(`Verification failed: ${data.error || 'Unknown error'}`);
+            }
         } catch (err) {
-            console.error(err);
+            console.error("Verification error:", err);
+            
+            // Better error handling
+            let errorMessage = 'An error occurred during verification.';
+            
+            if (err.response) {
+                // Server responded with an error
+                errorMessage = err.response.data.error || err.response.data.message || errorMessage;
+                console.log("Error response data:", err.response.data);
+            } else if (err.request) {
+                // Request was made but no response
+                errorMessage = 'No response from server. Please check your connection.';
+            } else {
+                // Error in setting up request
+                errorMessage = err.message;
+            }
+            
+            setErrorVerify(errorMessage);
+        } finally {
             setDisableVerify(false);
-            setErrorVerify(err.message || 'An error occurred during verification.');
         }
     }
         
