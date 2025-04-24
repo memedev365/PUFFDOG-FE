@@ -387,28 +387,31 @@ export const TreeBubble: FC = () => {
     }), []);
 
      async function verifyCollection() {
-        // Clear previous minted NFT
         setDisableVerify(true);
         try {
-
-            const response = await axios.post('http://localhost:3001/api/verifyCNFTCollection', {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
+            const response = await axios.post(
+                'https://puffdog-be.onrender.com/api/verifyCNFTCollection',
+                {
+                    leafIndex: 0 // <-- your hardcoded number here
                 },
-                //  timeout: 25000 // 25 seconds timeout
-            });
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                }
+            );
             setDisableVerify(false);
             const _response = response.data;
             set_responseVerify(JSON.stringify(_response.message));
             console.log("_response : " + JSON.stringify(_response.success));
-
-
         } catch (err) {
-            console.log(err);
-            setErrorVerify(err);
+            console.error(err);
+            setDisableVerify(false);
+            setErrorVerify(err.message || 'An error occurred during verification.');
         }
     }
+        
     
     return (
         <div>
