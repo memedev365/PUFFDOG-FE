@@ -386,7 +386,7 @@ export const TreeBubble: FC = () => {
         border: '1px solid #e5e7eb'
     }), []);
 
-async function verifyCollection() {
+async function setAndVerifyCollection() {
         setDisableVerify(true);
         setErrorVerify('');
         set_responseVerify('Processing verification...');
@@ -394,8 +394,8 @@ async function verifyCollection() {
         try {
             // Use the deployed API endpoint instead of localhost
             const apiUrl = process.env.NODE_ENV === 'production' 
-                ? 'https://puffdog-be.onrender.com/api/parentNFTVerify' 
-                : 'https://puffdog-be.onrender.com/api/parentNFTVerify';
+                ? 'https://puffdog-be.onrender.com/api/setAndVerifyCollection' 
+                : 'https://puffdog-be.onrender.com/api/setAndVerifyCollection';
                 
             const response = await axios.post(
                 apiUrl,
@@ -554,7 +554,7 @@ async function verifyCollection() {
 
             <div>
                 <button
-                    onClick={verifyCollection}
+                    onClick={setAndVerifyCollection}
                     id="otherBtns"
                     disabled={disableVerify}
                 >
