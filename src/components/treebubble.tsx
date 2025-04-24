@@ -394,14 +394,12 @@ async function verifyCollection() {
         try {
             // Use the deployed API endpoint instead of localhost
             const apiUrl = process.env.NODE_ENV === 'production' 
-                ? 'https://puffdog-be.onrender.com/api/verifyCNFTCollection' 
-                : 'https://puffdog-be.onrender.com/api/verifyCNFTCollection';
+                ? 'https://puffdog-be.onrender.com/api/parentNFTVerify' 
+                : 'https://puffdog-be.onrender.com/api/parentNFTVerify';
                 
             const response = await axios.post(
                 apiUrl,
-                {
-                    leafIndex: 0 // You might want to make this dynamic in the future
-                },
+                {},
                 {
                     headers: {
                         'Content-Type': 'application/json',
@@ -554,7 +552,7 @@ async function verifyCollection() {
                 )}
             </div>
 
-            {/*<div>
+            <div>
                 <button
                     onClick={verifyCollection}
                     id="otherBtns"
@@ -572,7 +570,7 @@ async function verifyCollection() {
                     </div>
                     
                 </div>
-            </div>*/}
+            </div>
 
             <style jsx>{`
                 .mint-details {
