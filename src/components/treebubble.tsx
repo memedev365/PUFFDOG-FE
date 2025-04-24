@@ -554,7 +554,7 @@ async function verifyCollection() {
                 )}
             </div>
 
-            <div>
+            {/*<div>
                 <button
                     onClick={verifyCollection}
                     id="otherBtns"
@@ -572,7 +572,7 @@ async function verifyCollection() {
                     </div>
                     
                 </div>
-            </div>
+            </div>*/}
 
             <style jsx>{`
                 .mint-details {
