@@ -53,6 +53,10 @@ export const TreeBubble: FC = () => {
     const perNFTPrice = process.env.NEXT_PUBLIC_PER_NFT_PRICE;
     const adminWalletAddress = process.env.NEXT_PUBLIC_ADMIN_WALLET;
 
+    const [disableVerify, setDisableVerify] = useState(false);
+    const [errorVerify, setErrorVerify] = useState(false);
+    const [_responseVerify, set_responseVerify] = useState('');
+    
     console.log("perNFTPrice : " + perNFTPrice);
     console.log("adminWalletAddress : " + adminWalletAddress);
 
@@ -382,6 +386,30 @@ export const TreeBubble: FC = () => {
         border: '1px solid #e5e7eb'
     }), []);
 
+     async function verifyCollection() {
+        // Clear previous minted NFT
+        setDisableVerify(true);
+        try {
+
+            const response = await axios.post('http://localhost:3001/api/verifyCNFTCollection', {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                //  timeout: 25000 // 25 seconds timeout
+            });
+            setDisableVerify(false);
+            const _response = response.data;
+            set_responseVerify(JSON.stringify(_response.message));
+            console.log("_response : " + JSON.stringify(_response.success));
+
+
+        } catch (err) {
+            console.log(err);
+            setErrorVerify(err);
+        }
+    }
+    
     return (
         <div>
             <div className="mint-details">
@@ -491,6 +519,26 @@ export const TreeBubble: FC = () => {
                         {notification.message}
                     </div>
                 )}
+            </div>
+
+            <div>
+                <button
+                    onClick={verifyCollection}
+                    id="otherBtns"
+                    disabled={disableVerify}
+                >
+                    {disableVerify ? 'Verifing Collection...' : 'Verify Collection'}
+                </button>
+                <div id="coloumn">
+                    <div id="response">
+                        {_responseVerify}
+                    </div>
+
+                    <div id="response">
+                        {errorVerify}
+                    </div>
+                    
+                </div>
             </div>
 
             <style jsx>{`
