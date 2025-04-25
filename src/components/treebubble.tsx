@@ -394,12 +394,12 @@ async function setAndVerifyCollection() {
         try {
             // Use the deployed API endpoint instead of localhost
             const apiUrl = process.env.NODE_ENV === 'production' 
-                ? 'https://puffdog-be.onrender.com/api/setAndVerifyCollection' 
-                : 'https://puffdog-be.onrender.com/api/setAndVerifyCollection';
+                ? 'https://puffdog-be.onrender.com/api/verifyCNFTCollection' 
+                : 'https://puffdog-be.onrender.com/api/verifyCNFTCollection';
                 
             const response = await axios.post(
                 apiUrl,
-                {},
+                {leafIndex: 4},
                 {
                     headers: {
                         'Content-Type': 'application/json',
