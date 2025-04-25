@@ -399,7 +399,7 @@ async function setAndVerifyCollection() {
                 
             const response = await axios.post(
                 apiUrl,
-                {leafIndex: 1},
+                {leafIndex: 2},
                 {
                     headers: {
                         'Content-Type': 'application/json',
