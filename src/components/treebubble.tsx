@@ -130,7 +130,7 @@ export const TreeBubble: FC = () => {
     }, [umi, merkleTreeLink]);
 
     // Minting function
-    async function mintWithSolPayment() {
+       async function mintWithSolPayment() {
         // Clear previous minted NFT
         setLastMintedNft(null);
         let loaderNotificationId: string | undefined;
@@ -188,6 +188,7 @@ export const TreeBubble: FC = () => {
                 microLamports: 100000
             });
 
+            // Create transaction
             let transaction = new Transaction()
                 .add(priorityFeeInstruction)
                 .add(transferInstruction);
@@ -196,8 +197,16 @@ export const TreeBubble: FC = () => {
             transaction.recentBlockhash = blockhash;
             transaction.feePayer = wallet.publicKey;
 
-            console.log('Sending transaction...');
-            const signature = await wallet.sendTransaction(transaction, connection);
+            // *** CHANGED PART - BEGIN ***
+            // This is the key change requested by Phantom support:
+            // Separate signing from sending the transaction
+            console.log('Signing transaction...');
+            const signedTransaction = await wallet.signTransaction(transaction);
+
+            console.log('Sending signed transaction...');
+            const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+            // *** CHANGED PART - END ***
+
             const txid = signature.toString();
             console.log(`Payment TXID: ${txid}`);
 
@@ -212,22 +221,19 @@ export const TreeBubble: FC = () => {
             console.log('[5/6] Calling backend mint API...');
             debouncedSetNotification({ message: 'Minting NFT...', type: 'info' });
 
-            // Create payload object
+            // Rest of the function remains the same
             const payload = {
                 userWallet: wallet.publicKey.toString(),
                 paymentSignature: signature
             };
 
-            // Using axios instead of fetch
-            const response = await axios.post('https://puffdog-be.onrender.com/api/mint', payload, {
+            const response = await axios.post('http://localhost:3001/api/mint', payload, {
                 headers: {
                     'Content-Type': 'application/json',
                     'Accept': 'application/json'
                 },
-                //  timeout: 25000 // 25 seconds timeout
             });
 
-            // Access data directly from axios response
             const _response = response.data;
             const nftId = _response.nftId;
             const imageUrl = _response.imageUrl;
