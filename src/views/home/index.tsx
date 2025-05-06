@@ -30,9 +30,9 @@ export const HomeView: FC = ({ }) => {
 
   return (
     <div className="main-container font-quicksand">
-      <h1 className="main-title">
-        <span className="title-line">MINT YOUR PUFF DOG TODAY</span>
-        <span className="title-line">START WINNING!</span>
+     <h1 className="main-title">
+        <span className="title-line" id="colorH">MINT YOUR PUFF DOG TODAY</span>
+        <span className="title-line" id="colorH2">START WINNING!</span>
       </h1>
 
       <p className="subtitle">
