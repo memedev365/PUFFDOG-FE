@@ -478,7 +478,7 @@ async function setAndVerifyCollection() {
     return (
         <div>
             <div className="mint-details">
-                <div className="mint-info">
+                <div className="mint-info" id="colorH4">
                     <span id="txtColor">{totalMinted - 1} / 10,000 Minted</span>
                     <span id="txtColor">≡ {Number(perNFTPrice)} SOL* + GAS</span>
                 </div>
