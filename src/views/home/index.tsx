@@ -36,7 +36,7 @@ export const HomeView: FC = ({ }) => {
       </h1>
 
       <p className="subtitle"  id="colorH3">
-        Don't wait—these rare NFTs won't last forever. Grab yours now, lock in your rewards, and let the good vibes roll!
+        Minting may take a moment — hang tight while the blockchain does its thing. These rare NFTs won’t last long, so claim yours now!
       </p>
       <TreeBubble />
     </div>
