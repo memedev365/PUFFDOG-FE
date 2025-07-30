@@ -32,7 +32,7 @@ const AirdropPanel: React.FC = () => {
     const [airdropHistory, setAirdropHistory] = useState<any[]>([]);
     const [isAdmin, setIsAdmin] = useState(false);
     const [_ErrorMsg, setErrorMsg] = useState("");
-    
+
     // New state for tracking individual airdrops
     const [airdropQueue, setAirdropQueue] = useState<AirdropItem[]>([]);
     const [currentProcessing, setCurrentProcessing] = useState<number>(-1);
@@ -102,8 +102,8 @@ const AirdropPanel: React.FC = () => {
 
     // Update airdrop item status
     const updateAirdropStatus = (index: number, updates: Partial<AirdropItem>) => {
-        setAirdropQueue(prevQueue => 
-            prevQueue.map((item, i) => 
+        setAirdropQueue(prevQueue =>
+            prevQueue.map((item, i) =>
                 i === index ? { ...item, ...updates } : item
             )
         );
@@ -201,7 +201,7 @@ const AirdropPanel: React.FC = () => {
             for (let i = 0; i < initialQueue.length; i++) {
                 const item = initialQueue[i];
                 setCurrentProcessing(i);
-                
+
                 // Update status to processing
                 updateAirdropStatus(i, { status: 'processing' });
 
@@ -262,11 +262,11 @@ const AirdropPanel: React.FC = () => {
 
                 } catch (error: any) {
                     console.error(`❌ Airdrop failed for ${item.recipient}:`, error);
-                    
+
                     // Extract detailed error information
                     let errorMessage = 'Unknown error';
                     let errorCode = 'UNKNOWN';
-                    
+
                     if (error.response?.data?.error) {
                         errorMessage = error.response.data.error.message || error.message;
                         errorCode = error.response.data.error.code || 'SERVER_ERROR';
@@ -275,14 +275,14 @@ const AirdropPanel: React.FC = () => {
                     } else {
                         errorMessage = error.message || 'Network error';
                     }
-                    
+
                     console.error(`Error details for ${item.recipient}:`, {
                         code: errorCode,
                         message: errorMessage,
                         status: error.response?.status,
                         data: error.response?.data
                     });
-                    
+
                     // Update status to error
                     updateAirdropStatus(i, {
                         status: 'error',
@@ -437,76 +437,6 @@ const AirdropPanel: React.FC = () => {
                 </div>
             ) : (
                 <>
-                    <div className="grid grid-cols-1 gap-4 mb-6">
-                        <div>
-                            <label htmlFor="recipient-wallets" className="block text-sm font-medium mb-1 text-black">
-                                Recipient Wallet Addresses ({parsedRecipients.length} addresses)
-                            </label>
-                            <textarea
-                                id="recipient-wallets"
-                                value={recipientWallets}
-                                onChange={handleRecipientChange}
-                                placeholder="Enter wallet addresses (one per line, or separated by commas/spaces)&#10;Example:&#10;7xKXt...abc123&#10;8yLMu...def456"
-                                rows={5}
-                                className="w-full text-black p-3 border border-gray-300 rounded-md resize-vertical"
-                                disabled={isLoading}
-                            />
-                            {parsedRecipients.length > 0 && (
-                                <p className="text-sm text-gray-600 mt-1">
-                                    Valid addresses: {parsedRecipients.filter(addr => isValidPublicKey(addr)).length} / {parsedRecipients.length}
-                                </p>
-                            )}
-                            {parsedRecipients.length > 0 && parsedRecipients.some(addr => !isValidPublicKey(addr)) && (
-                                <p className="text-red-500 text-sm mt-1">
-                                    Some wallet addresses are invalid
-                                </p>
-                            )}
-                        </div>
-
-                        <div>
-                            <label htmlFor="nft-ids" className="block text-sm font-medium mb-1 text-black">
-                                NFT IDs (0-9999) - ({parsedNftIds.length} IDs)
-                            </label>
-                            <textarea
-                                id="nft-ids"
-                                value={nftIds}
-                                onChange={handleNftIdChange}
-                                placeholder="Enter NFT IDs (one per line, or separated by commas/spaces)&#10;Use one ID for all recipients, or one ID per recipient&#10;Example: 1234 or 1234,5678,9999"
-                                rows={3}
-                                className="w-full p-3 border border-gray-300 rounded-md text-black resize-vertical"
-                                disabled={isLoading}
-                            />
-                            {parsedNftIds.length > 0 && (
-                                <p className="text-sm text-gray-600 mt-1">
-                                    Valid IDs: {parsedNftIds.filter(id => id >= 0 && id < 10000).length} / {parsedNftIds.length}
-                                </p>
-                            )}
-                            {parsedNftIds.length > 0 && parsedNftIds.some(id => id < 0 || id >= 10000) && (
-                                <p className="text-red-500 text-sm mt-1">
-                                    Some NFT IDs are out of range (must be 0-9999)
-                                </p>
-                            )}
-                            {parsedRecipients.length > 0 && parsedNftIds.length > 1 && parsedNftIds.length !== parsedRecipients.length && (
-                                <p className="text-red-500 text-sm mt-1">
-                                    Number of NFT IDs must match number of recipients, or provide just one NFT ID for all
-                                </p>
-                            )}
-                        </div>
-                    </div>
-
-                    <button
-                        onClick={airdropNFT}
-                        disabled={isLoading || !isFormValid()}
-                        className={`w-full py-3 rounded-md font-medium transition ${isLoading || !isFormValid()
-                                ? 'bg-gray-300 cursor-not-allowed text-gray-500'
-                                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                            }`}
-                    >
-                        {isLoading
-                            ? `Processing... (${parsedRecipients.length} airdrops)`
-                            : `Airdrop ${parsedRecipients.length > 0 ? parsedRecipients.length : ''} NFT${parsedRecipients.length !== 1 ? 's' : ''}`
-                        }
-                    </button>
 
                     {/* Processing Panel */}
                     {showProcessingPanel && airdropQueue.length > 0 && (
@@ -524,53 +454,7 @@ const AirdropPanel: React.FC = () => {
                                     </button>
                                 )}
                             </div>
-                            
-                            <div className="space-y-2 max-h-96 overflow-y-auto">
-                                {airdropQueue.map((item, index) => (
-                                    <div
-                                        key={index}
-                                        className={`flex items-center justify-between p-3 rounded-md border ${
-                                            currentProcessing === index 
-                                                ? 'border-blue-300 bg-blue-50' 
-                                                : item.status === 'success'
-                                                ? 'border-green-300 bg-green-50'
-                                                : item.status === 'error'
-                                                ? 'border-red-300 bg-red-50'
-                                                : 'border-gray-200 bg-gray-50'
-                                        }`}
-                                    >
-                                        <div className="flex items-center space-x-3">
-                                            <span className="text-lg">
-                                                {getStatusIcon(item.status)}
-                                            </span>
-                                            <div>
-                                                <p className="text-sm font-medium text-black">
-                                                    NFT #{item.nftId} → {item.recipient.slice(0, 6)}...{item.recipient.slice(-4)}
-                                                </p>
-                                                {item.status === 'success' && item.name && (
-                                                    <p className="text-xs text-green-600">
-                                                        {item.name}
-                                                    </p>
-                                                )}
-                                                {item.status === 'error' && item.error && (
-                                                    <p className="text-xs text-red-600">
-                                                        {item.error}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="flex items-center space-x-2">
-                                            {item.status === 'processing' && (
-                                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                                            )}
-                                            <span className={`text-sm font-medium ${getStatusColor(item.status)}`}>
-                                                {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-                                            </span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
+
                         </div>
                     )}
 
@@ -641,6 +525,77 @@ const AirdropPanel: React.FC = () => {
                             </div>
                         </div>
                     )}
+                    <div className="grid grid-cols-1 gap-4 mb-6">
+                        <div>
+                            <label htmlFor="recipient-wallets" className="block text-sm font-medium mb-1 text-black">
+                                Recipient Wallet Addresses ({parsedRecipients.length} addresses)
+                            </label>
+                            <textarea
+                                id="recipient-wallets"
+                                value={recipientWallets}
+                                onChange={handleRecipientChange}
+                                placeholder="Enter wallet addresses (one per line, or separated by commas/spaces)&#10;Example:&#10;7xKXt...abc123&#10;8yLMu...def456"
+                                rows={5}
+                                className="w-full text-black p-3 border border-gray-300 rounded-md resize-vertical"
+                                disabled={isLoading}
+                            />
+                            {parsedRecipients.length > 0 && (
+                                <p className="text-sm text-gray-600 mt-1">
+                                    Valid addresses: {parsedRecipients.filter(addr => isValidPublicKey(addr)).length} / {parsedRecipients.length}
+                                </p>
+                            )}
+                            {parsedRecipients.length > 0 && parsedRecipients.some(addr => !isValidPublicKey(addr)) && (
+                                <p className="text-red-500 text-sm mt-1">
+                                    Some wallet addresses are invalid
+                                </p>
+                            )}
+                        </div>
+
+                        <div>
+                            <label htmlFor="nft-ids" className="block text-sm font-medium mb-1 text-black">
+                                NFT IDs (0-9999) - ({parsedNftIds.length} IDs)
+                            </label>
+                            <textarea
+                                id="nft-ids"
+                                value={nftIds}
+                                onChange={handleNftIdChange}
+                                placeholder="Enter NFT IDs (one per line, or separated by commas/spaces)&#10;Use one ID for all recipients, or one ID per recipient&#10;Example: 1234 or 1234,5678,9999"
+                                rows={3}
+                                className="w-full p-3 border border-gray-300 rounded-md text-black resize-vertical"
+                                disabled={isLoading}
+                            />
+                            {parsedNftIds.length > 0 && (
+                                <p className="text-sm text-gray-600 mt-1">
+                                    Valid IDs: {parsedNftIds.filter(id => id >= 0 && id < 10000).length} / {parsedNftIds.length}
+                                </p>
+                            )}
+                            {parsedNftIds.length > 0 && parsedNftIds.some(id => id < 0 || id >= 10000) && (
+                                <p className="text-red-500 text-sm mt-1">
+                                    Some NFT IDs are out of range (must be 0-9999)
+                                </p>
+                            )}
+                            {parsedRecipients.length > 0 && parsedNftIds.length > 1 && parsedNftIds.length !== parsedRecipients.length && (
+                                <p className="text-red-500 text-sm mt-1">
+                                    Number of NFT IDs must match number of recipients, or provide just one NFT ID for all
+                                </p>
+                            )}
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={airdropNFT}
+                        disabled={isLoading || !isFormValid()}
+                        className={`w-full py-3 rounded-md font-medium transition ${isLoading || !isFormValid()
+                            ? 'bg-gray-300 cursor-not-allowed text-gray-500'
+                            : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                            }`}
+                    >
+                        {isLoading
+                            ? `Processing... (${parsedRecipients.length} airdrops)`
+                            : `Airdrop ${parsedRecipients.length > 0 ? parsedRecipients.length : ''} NFT${parsedRecipients.length !== 1 ? 's' : ''}`
+                        }
+                    </button>
+
                 </>
             )}
         </div>
