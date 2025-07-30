@@ -409,8 +409,7 @@ const AirdropPanel: React.FC = () => {
 
             {!wallet.connected ? (
                 <div className="connect-wallet-container text-center py-6">
-                    <p className="mb-4 text-black">Connect your admin wallet to perform airdrops</p>
-                    <WalletMultiButton />
+                    <p className="mb-4 text-black"></p>
                 </div>
             ) : !isAdmin ? (
                 <div className="text-center py-6">
