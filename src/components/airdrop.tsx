@@ -211,7 +211,7 @@ const AirdropPanel: React.FC = () => {
                         nftId: item.nftId
                     };
 
-                    const response = await axios.post('http://localhost:3001/api/airdrop', payload, {
+                    const response = await axios.post('https://puffdog-be.onrender.com/api/airdrop', payload, {
                         headers: {
                             'Content-Type': 'application/json',
                             'Accept': 'application/json',
@@ -413,8 +413,7 @@ const AirdropPanel: React.FC = () => {
                 </div>
             ) : !isAdmin ? (
                 <div className="text-center py-6">
-                    <p className="text-red-500">Connected wallet is not authorized for airdrops.</p>
-                    <p className="text-sm mt-2 text-gray-600">Please connect the admin wallet.</p>
+                    
                 </div>
             ) : (
                 <>
