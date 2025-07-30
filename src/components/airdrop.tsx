@@ -263,12 +263,30 @@ const AirdropPanel: React.FC = () => {
                 } catch (error: any) {
                     console.error(`❌ Airdrop failed for ${item.recipient}:`, error);
                     
-                    const errorMessage = error.response?.data?.error?.message || error.message;
+                    // Extract detailed error information
+                    let errorMessage = 'Unknown error';
+                    let errorCode = 'UNKNOWN';
+                    
+                    if (error.response?.data?.error) {
+                        errorMessage = error.response.data.error.message || error.message;
+                        errorCode = error.response.data.error.code || 'SERVER_ERROR';
+                    } else if (error.response?.data) {
+                        errorMessage = error.response.data.message || error.message;
+                    } else {
+                        errorMessage = error.message || 'Network error';
+                    }
+                    
+                    console.error(`Error details for ${item.recipient}:`, {
+                        code: errorCode,
+                        message: errorMessage,
+                        status: error.response?.status,
+                        data: error.response?.data
+                    });
                     
                     // Update status to error
                     updateAirdropStatus(i, {
                         status: 'error',
-                        error: errorMessage
+                        error: `${errorCode}: ${errorMessage}`
                     });
 
                     failureCount++;
@@ -409,11 +427,13 @@ const AirdropPanel: React.FC = () => {
 
             {!wallet.connected ? (
                 <div className="connect-wallet-container text-center py-6">
-                    <p className="mb-4 text-black"></p>
+                    <p className="mb-4 text-black">Connect your admin wallet to perform airdrops</p>
+                    <WalletMultiButton />
                 </div>
             ) : !isAdmin ? (
                 <div className="text-center py-6">
-                    
+                    <p className="text-red-500">Connected wallet is not authorized for airdrops.</p>
+                    <p className="text-sm mt-2 text-gray-600">Please connect the admin wallet.</p>
                 </div>
             ) : (
                 <>
