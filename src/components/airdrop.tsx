@@ -439,7 +439,7 @@ const AirdropPanel: React.FC = () => {
                         <div className="mt-6 bg-white border border-gray-300 rounded-lg p-4">
                             <div className="flex justify-between items-center mb-4">
                                 <h3 className="text-lg font-semibold text-black">
-                                    Airdrop Progress ({airdropQueue.filter(item => item.status === 'success').length}/{airdropQueue.length} completed)
+                                    Puff Dog Airdrop Progress ({airdropQueue.filter(item => item.status === 'success').length}/{airdropQueue.length} completed)
                                 </h3>
                                 {!isLoading && (
                                     <button
@@ -451,8 +451,36 @@ const AirdropPanel: React.FC = () => {
                                 )}
                             </div>
 
+                            <div className="space-y-2 max-h-96 overflow-y-auto">
+                                {airdropQueue.map((item, index) => (
+                                    <div
+                                        key={index}
+                                        className={`flex items-center justify-between p-3 rounded-md border ${currentProcessing === index ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'
+                                            }`}
+                                    >
+                                        <div className="flex items-center space-x-3">
+                                            <span className="text-lg">{getStatusIcon(item.status)}</span>
+                                            <div>
+                                                <p className="text-sm font-medium text-black">
+                                                    PUFF DOG #{item.nftId} → {item.recipient.slice(0, 6)}...{item.recipient.slice(-4)}
+                                                </p>
+                                                {item.error && (
+                                                    <p className="text-xs text-red-500 mt-1">{item.error}</p>
+                                                )}
+                                                {item.name && (
+                                                    <p className="text-xs text-green-600 mt-1">{item.name}</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <span className={`text-sm font-medium ${getStatusColor(item.status)}`}>
+                                            {item.status}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     )}
+
 
                     {_ErrorMsg && (
                         <div className="font-semibold mt-2 p-3 bg-red-100 border border-red-300 rounded-md text-red-700">
